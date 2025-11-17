@@ -73,8 +73,47 @@ function solve(model::MySimulatedAnnealingMinimumVariancePortfolioAllocationProb
     
         accepted_counter = 0; 
         
-        # TODO: Implement simulated annealing logic here -
-        throw(ErrorException("Oooops! Simulated annealing logic not yet implemented!!"));
+        # inner loop: try KL candidate moves at current temperature
+        n = length(current_w);
+        for iter in 1:KL
+            # generate candidate by adding gaussian noise
+            w_c = current_w .+ β*randn(n);
+
+            # enforce non-negativity (and avoid zeros for log barrier) by clamping to small epsilon
+            eps = 1e-8
+            w_c = max.(w_c, eps);
+
+            # renormalize to sum to one to respect simplex (helps with feasibility)
+            w_c ./= sum(w_c);
+
+            # evaluate objective
+            f_c = _objective_function(w_c, ḡ, Σ̂, R, μ, ρ);
+
+            # acceptance rule
+            Δ = f_c - current_f;
+            accept = false
+            if Δ <= 0.0
+                accept = true
+            else
+                # Metropolis criterion
+                p = exp(-Δ / T)
+                if rand() < p
+                    accept = true
+                end
+            end
+
+            if accept
+                current_w = w_c;
+                current_f = f_c;
+                accepted_counter += 1;
+
+                # update best
+                if current_f < f_best
+                    f_best = current_f;
+                    w_best = current_w;
+                end
+            end
+        end
 
         # update KL -
         fraction_accepted = accepted_counter/KL; # what is the fraction of accepted moves
@@ -89,14 +128,15 @@ function solve(model::MySimulatedAnnealingMinimumVariancePortfolioAllocationProb
             KL = ceil(Int, 1.5*KL);
         end
 
-        # update penalty parameters and T -
-        μ *= τ*μ;
-        ρ *= τ*ρ;
+        # update penalty parameters and temperature
+        # reduce μ and ρ by factor τ (so 1/μ and 1/ρ grow and penalties tighten)
+        μ *= τ;
+        ρ *= τ;
 
-        if (T ≤ T₁)
+        # decrease temperature by geometric cooling
+        T *= α
+        if (T <= T₁)
             has_converged = true;
-        else
-            T *= (α*T); # Not done yet, so decrease the T -
         end
     end
 
