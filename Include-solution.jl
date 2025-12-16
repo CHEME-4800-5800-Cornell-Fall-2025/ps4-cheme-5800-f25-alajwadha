@@ -11,7 +11,13 @@ if (isfile(joinpath(_ROOT, "Manifest.toml")) == false) # have manifest file, we 
 end
 
 # load external packages -
-using VLDataScienceMachineLearningPackage
+# Attempt to load VLDataScienceMachineLearningPackage, but continue if it fails
+try
+    @info "Loading VLDataScienceMachineLearningPackage"
+    using VLDataScienceMachineLearningPackage
+catch err
+    @warn "VLDataScienceMachineLearningPackage failed to load; proceeding without it" error=err
+end
 using LinearAlgebra
 using BenchmarkTools
 using Statistics
