@@ -1,3 +1,5 @@
+import Random
+
 function _safe_log(x::Float64)
     if x <= 0.0
         return -1.0e10; # a large negative number
@@ -11,10 +13,10 @@ function _objective_function(w::Array{Float64,1}, ḡ::Array{Float64,1},
 
 
     # TODO: This version of the objective function includes the barrier term, and the penalty terms -
-    f = w'*(Σ̂*w) + (1/(2*ρ))*((sum(w) - 1.0)^2 + (transpose(ḡ)*w - R)^2) - (1/μ)*sum(_safe_log.(w));
+    f = w'*(Σ̂*w) + (1/(2*ρ))*((sum(w) - 1.0)^2 + (dot(ḡ,w) - R)^2) - (1/μ)*sum(_safe_log.(w));
 
     # TODO: This version of the objective function does NOT have the barrier term
-    # f = w'*(Σ̂*w) + (1/(2*ρ))*((sum(w) - 1.0)^2 + (transpose(ḡ)*w - R)^2);
+    # f = w'*(Σ̂*w) + (1/(2*ρ))*((sum(w) - 1.0)^2 + (dot(ḡ,w) - R)^2);
 
 
     return f;
@@ -48,9 +50,18 @@ The `solve` function solves the minimum variance portfolio allocation problem us
 function solve(model::MySimulatedAnnealingMinimumVariancePortfolioAllocationProblem; 
     verbose::Bool = true, K::Int = 10000, T₀::Float64 = 1.0, T₁::Float64 = 0.1, 
     α::Float64 = 0.99, β::Float64 = 0.01, τ::Float64 = 0.99,
-    μ::Float64 = 1.0, ρ::Float64 = 1.0)
+    μ::Float64 = 1.0, ρ::Float64 = 1.0,
+    max_levels::Union{Nothing,Int}=nothing,
+    stall_tol::Float64=1.0e-9,
+    stall_levels::Int=25,
+    KL_min::Int=100,
+    KL_max::Int=5000,
+    seed::Union{Nothing,Int}=nothing)
 
     # initialize -
+    if seed !== nothing
+        Random.seed!(seed)
+    end
     has_converged = false;
 
     # unpack the model parameters -
@@ -69,12 +80,24 @@ function solve(model::MySimulatedAnnealingMinimumVariancePortfolioAllocationProb
     f_best = current_f;
     KL = K;
 
+    # compute the maximum number of temperature levels if not provided
+    computed_levels = ceil(Int, log(T₁/T₀)/log(α))
+    level_cap = max_levels === nothing ? max(computed_levels, 1) : max_levels
+
+    no_improve_count = 0
+    last_best = f_best
+
+    level_counter = 0
     while has_converged == false
+        level_counter += 1
     
         accepted_counter = 0; 
         
         # inner loop: try KL candidate moves at current temperature
         n = length(current_w);
+        # clamp KL to avoid explosion
+        KL = clamp(KL, KL_min, KL_max)
+
         for iter in 1:KL
             # generate candidate by adding gaussian noise
             w_c = current_w .+ β*randn(n);
@@ -135,7 +158,16 @@ function solve(model::MySimulatedAnnealingMinimumVariancePortfolioAllocationProb
 
         # decrease temperature by geometric cooling
         T *= α
-        if (T <= T₁)
+        
+        # early stopping: stall detection on best objective
+        if f_best < last_best - stall_tol
+            no_improve_count = 0
+            last_best = f_best
+        else
+            no_improve_count += 1
+        end
+
+        if (T <= T₁) || (level_counter >= level_cap) || (no_improve_count >= stall_levels)
             has_converged = true;
         end
     end
